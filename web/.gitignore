@@ -1,0 +1,45 @@
+# Next.js + pnpm + Playwright frontend.
+# Mirrors what `create-next-app` generates, with our additions.
+
+# --- deps ---
+/node_modules
+/.pnp
+.pnp.*
+.yarn/install-state.gz
+
+# --- testing ---
+/coverage
+
+# --- Next.js build output ---
+/.next/
+/out/
+
+# --- production build ---
+/build
+
+# --- TypeScript incremental ---
+*.tsbuildinfo
+# next-env.d.ts is INTENTIONALLY tracked — Next.js regenerates it on every
+# `next dev`/`next build` but the file is meant to live in version control.
+
+# --- misc ---
+.DS_Store
+*.pem
+
+# --- debug ---
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# --- local env files (root .gitignore also covers these; explicit here too) ---
+.env*.local
+
+# --- Vercel ---
+.vercel
+
+# --- Playwright artifacts ---
+/test-results/
+/playwright-report/
+/playwright/.cache/
+/blob-report/

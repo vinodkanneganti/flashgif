@@ -1,0 +1,36 @@
+# Spring Boot / Gradle backend.
+
+# --- Gradle ---
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# --- IDE output dirs (in addition to root-level .idea/ etc.) ---
+out/        # IntelliJ
+bin/        # Eclipse
+.classpath
+.project
+.settings/
+.springBeans
+.sts4-cache/
+
+# --- Spring Boot extras ---
+HELP.md
+.factorypath
+
+# --- Local-only test scratch ---
+*.log
+hs_err_pid*.log
+replay_pid*.log
+
+# --- Test reports / coverage (regen on each run) ---
+.coverage/
+jacoco.exec
+**/build/reports/
+
+# --- Generated OpenAPI snapshot path (we re-generate, never hand-edit) ---
+# (commented out — we DO want docs/openapi.yaml under version control for
+# client codegen consumers; uncomment only if you change that policy)
+# docs/openapi.yaml
