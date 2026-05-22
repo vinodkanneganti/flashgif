@@ -429,6 +429,198 @@ Secrets (JWT signing key, DB credentials, S3 keys) are sourced from a secrets ma
 
 ---
 
+## 6. Frontend Architecture
+
+The web client is a Next.js 14 (App Router) application that consumes the public API contract. It is a separate deployable from the backend, designed to be hostable on any Node-capable runtime (Vercel, container, self-hosted node) and to keep the backend free of any rendering concerns.
+
+### 6.1 Stack and rationale
+
+| Concern | Choice | Why |
+|---|---|---|
+| Framework | **Next.js 14 App Router** | First-class server components for SEO-critical pages (trending, search, channels), route handlers for the auth proxy, streaming for pages that fetch above-the-fold data |
+| Language | **TypeScript 5.6 strict** | Catches API-contract drift at compile time; required for safe `openapi-typescript` consumption |
+| Styling | **Tailwind CSS** | Utility-first scales with team velocity, zero runtime, trivial to theme via CSS variables |
+| Components | **shadcn/ui (copy-paste)** | We own the components in-repo; full customization without runtime dep on a UI library; CSS-variable themed |
+| Server state | **TanStack Query v5** | Caching, refetch-on-focus, optimistic updates, infinite query — all standard patterns |
+| Client state | **Zustand** | ~1KB; modal-open state, theme, ephemeral UI flags. Anything server-derived stays in React Query |
+| Forms | **React Hook Form + Zod** | Schema-first validation; Zod schemas mirror backend constraints (email format, password ≥12, etc.) |
+| API types | **openapi-typescript** | Generates `types.ts` from `docs/openapi.yaml`; no runtime client library |
+| API client | **Hand-written `fetch` wrappers** | Two wrappers: `apiFetch` for public/direct calls, `authedFetch` for same-origin cookie-backed calls with 401-refresh interceptor |
+| Charts | **recharts** | Single bar chart for usage analytics; ~50 KB |
+| E2E tests | **Playwright** | Auto-starts dev server; cross-browser-capable; chromium-only in CI for speed |
+| Package manager | **pnpm 11** | Faster, smaller `node_modules`, workspace-friendly |
+
+### 6.2 File layout
+
+```
+web/
+├── src/
+│   ├── app/                           Next.js App Router root
+│   │   ├── layout.tsx                 Server component: SSR-fetches /me, seeds React Query
+│   │   ├── page.tsx                   Home (trending) — server component
+│   │   ├── HomeClient.tsx             Client island for TypeChips + masonry hydration
+│   │   ├── search/
+│   │   │   ├── page.tsx               force-dynamic shell
+│   │   │   └── SearchClient.tsx       Infinite scroll, URL-state filters
+│   │   ├── login/page.tsx             Server component: redirect home if authed
+│   │   ├── register/page.tsx
+│   │   ├── favorites/page.tsx         Server-side auth gate
+│   │   ├── collections/{,/[id]}/
+│   │   ├── channels/[username]/       Public; server-fetches profile
+│   │   ├── settings/profile/         Owner-only
+│   │   ├── dev/{,/keys/new,/usage}/   Developer dashboard
+│   │   └── api/                       Route Handlers (same-origin proxy)
+│   │       ├── auth/{login,register,refresh,logout}/
+│   │       ├── users/me/
+│   │       ├── channels/profile/
+│   │       ├── favorites{,/[mediaId]}/
+│   │       ├── collections/{,/[id]{,/items{,/[mediaId]}}}/
+│   │       ├── media/{upload{,/[uploadId]/complete},status/[uploadId],metadata}/
+│   │       └── usage/analytics/
+│   │
+│   ├── components/
+│   │   ├── auth/                      LoginForm, RegisterForm, UserMenu
+│   │   ├── layout/                    Header, Footer
+│   │   ├── search/                    SearchBar, TypeChips
+│   │   ├── media/                     MediaCard, MasonryGrid
+│   │   ├── upload/                    UploadButton, UploadModal (3-stage)
+│   │   ├── favorites/                 MediaTilePlaceholder
+│   │   └── ui/                        shadcn primitives (Button, Input)
+│   │
+│   └── lib/
+│       ├── env.ts                     Typed env access (required-at-load)
+│       ├── utils.ts                   cn() className merger
+│       ├── api/
+│       │   ├── client.ts              apiFetch (public, direct to Spring)
+│       │   ├── authed.ts              authedFetch (proxy via Next, 401-retry)
+│       │   ├── endpoints.ts           search/trending/suggestions
+│       │   ├── auth.ts                login/register/logout + Me type
+│       │   ├── media.ts               upload pipeline
+│       │   ├── favorites.ts           favorites + collections CRUD
+│       │   ├── channels.ts            channel reads + profile PATCH
+│       │   ├── developer.ts           keys + usage
+│       │   └── types.ts               openapi-typescript output (stub today)
+│       ├── auth/
+│       │   ├── cookies.ts             Cookie names + option helpers
+│       │   ├── server.ts              SSR readAccessToken / getCurrentUser
+│       │   ├── session.ts             set/clear cookies from AuthResponse
+│       │   ├── proxy.ts               proxyToBackend() Route Handler helper
+│       │   └── schemas.ts             Zod for login/register
+│       ├── upload/schemas.ts          Zod + file validation
+│       └── query/
+│           ├── keys.ts                React Query key factory
+│           ├── QueryProvider.tsx      Per-tab QueryClient with optional SSR seed
+│           ├── hooks.ts               useTrending, useSearch, useSuggestions
+│           ├── authHooks.ts           useMe + login/register/logout mutations
+│           ├── favoritesHooks.ts      Optimistic favorite + collection hooks
+│           └── devHooks.ts            useDevKeys + useDevUsage
+└── tests/e2e/                         Playwright specs
+```
+
+### 6.3 Rendering strategy
+
+| Page | Mode | Why |
+|---|---|---|
+| `/` (home) | **Server-rendered + hydrate** (`dynamic = "force-dynamic"`) | SEO; first paint shows trending |
+| `/search` | **Force dynamic, client islands** | URL state drives the query; SEO value is minimal (search-result pages aren't typically indexed) |
+| `/channels/[username]` | **SSR direct to Spring** | SEO; first paint shows the creator's banner + bio |
+| `/login` `/register` | **Server gate + client form** | Server component redirects home if cookie already present; client form handles input |
+| `/favorites` `/collections` `/dev/*` | **Server auth gate, client lists** | Auth check on the server (cookie read); content fetched client-side via React Query |
+| `/settings/profile` | **SSR with form seed** | Server-fetches the current profile to populate the form's `defaultValues` |
+| `/api/*` | **Route Handlers** (no UI) | Same-origin proxy to Spring; reads httpOnly cookies the browser can't access |
+
+The root `layout.tsx` is a server component that:
+1. Reads the cookie via `next/headers#cookies()`
+2. Calls Spring `/users/me` directly (server-to-server, with the bearer token)
+3. Passes the resulting `user` to `<Header user={user}>` and seeds React Query via `<QueryProvider seed={{ me: user }}>`
+
+This eliminates the "Login → UserMenu flash" — the first paint already shows the correct state.
+
+### 6.4 Token storage and refresh flow
+
+The architecture decision (see ADR-007 in Appendix E) is **httpOnly cookies set by Next.js Route Handlers**, never JavaScript-readable.
+
+```
+Browser ──login form──► POST /api/auth/login
+                            │
+                            ▼
+                Next.js Route Handler
+                            │
+                            ▼
+                    POST <spring>/api/v1/auth/login
+                            │
+                            ▼  AuthResponse {access_token, refresh_token, ...}
+                            │
+            Set-Cookie: flashgif_access  (HttpOnly, Secure, SameSite=Lax, 15min)
+            Set-Cookie: flashgif_refresh (HttpOnly, Secure, SameSite=Lax, 30d,
+                                          Path=/api/auth)
+```
+
+Subsequent authed calls go through `authedFetch`, which targets same-origin Next.js routes:
+
+```
+authedFetch("/api/users/me")
+    │
+    ├── browser sends flashgif_access cookie automatically
+    ├── Next.js Route Handler reads cookie, sets Authorization: Bearer <jwt>,
+    │   forwards to Spring
+    └── on 401 from any non-auth path:
+            POST /api/auth/refresh (sends flashgif_refresh)
+            ├── Route Handler forwards refresh → Spring rotates → new pair
+            ├── on success: retry original request once
+            └── on failure: clear cookies, caller redirects to /login
+```
+
+**What the browser never sees:** raw JWT, raw refresh token. XSS exfiltration of session tokens is structurally impossible.
+
+### 6.5 API client patterns — `apiFetch` vs `authedFetch`
+
+Two distinct paths for two distinct trust models:
+
+| Function | Talks to | Auth | Used for |
+|---|---|---|---|
+| `apiFetch` | Spring directly (CORS-allowed) | None | Public reads: `/api/v1/search`, `/api/v1/trending`, `/api/v1/channels/{username}` (server-side too) |
+| `authedFetch` | Next.js Route Handlers (same-origin) | Cookie-backed | Anything that needs the user's session: `/me`, upload, favorites, collections, profile edit, dev keys, usage analytics |
+
+This split avoids the unnecessary same-origin hop for the ~90% of traffic that's public reads, while keeping authed calls XSS-safe.
+
+### 6.6 React Query patterns
+
+- **Key factory** (`lib/query/keys.ts`) centralizes all query keys so invalidation is type-safe and lookups are searchable.
+- **Server seeding** for `useMe` — root layout passes `{ me: user }` to `QueryProvider`, which pre-fills the cache with `setQueryData(queryKeys.me(), user)`.
+- **Infinite pagination** via `useInfiniteQuery` with `IntersectionObserver` sentinel in `SearchClient` and the channel feed.
+- **Optimistic mutations** for favorites: `onMutate` snapshots the cache and updates it speculatively; `onError` rolls back; `onSettled` re-fetches the canonical state.
+- **Debounced queries** for suggestions: 200ms debounce in `SearchBar`, then `useSuggestions(prefix)` with `enabled: prefix.length >= 2` and `staleTime: 5min`.
+- **Polling** for upload status: `setTimeout`-based loop (rather than React Query's `refetchInterval`) so we can short-circuit on terminal states (`READY` / `FAILED`).
+
+### 6.7 Forms
+
+`react-hook-form` for state + submission, `zod` for validation. Schemas mirror backend constraints exactly so client-side errors don't surprise the backend:
+
+```ts
+// lib/auth/schemas.ts
+const password = z.string().min(12, "At least 12 characters");
+const username = z.string().regex(/^[a-zA-Z0-9_]{3,30}$/, ...);
+```
+
+Backend errors that slip past client validation (e.g., 409 username collision) are surfaced inline via `setError("root", { message })`.
+
+### 6.8 Performance budget
+
+Production build (Next.js 14, gzipped):
+
+| Route | Page-specific | First Load JS |
+|---|---|---|
+| `/` | 597 B | 108 KB |
+| `/search` | 1.26 KB | 108 KB |
+| `/login` `/register` | 3.0 KB | 139 KB (RHF + Zod cost) |
+| `/channels/[username]` | 2.0 KB | 111 KB |
+| `/dev/usage` | 106 KB | **210 KB** (recharts) |
+
+Shared chunks total 87 KB. Largest individual page (`/dev/usage` with recharts) is 210 KB — well under the Lighthouse "good" threshold (250 KB) and only on a low-traffic admin page.
+
+---
+
 ## Appendices
 
 ### A. Evolution path (when to break the monolith)
@@ -745,3 +937,267 @@ Probably add Testcontainers-backed integration tests from day one — we had thr
 
 **Q75. What part of this design are you least confident about?**
 The popularity recompute formula (`log(1 + favorite_count*3 + view_count) * exp(-age_days/7)`) is a guess. We'll need to tune weights and decay based on actual user engagement data. The architecture supports rapid iteration (change formula → next batch reranks → outbox → ES) but the formula itself is a hypothesis until validated.
+
+---
+
+### E. Architecture Decision Records
+
+Every meaningful decision in the system, written ADR-style. Each entry is short by design — context, decision, rationale, consequences — so this section reads as a reference, not a story.
+
+**Conventions**
+- *Status* — Accepted (in production code), Deferred (decided to defer; document the trigger that flips it), Superseded (replaced by a later ADR).
+- *Trigger* (where present) — the concrete future event that would cause us to revisit the decision.
+
+---
+
+#### ADR-001: Modular monolith over microservices
+**Status:** Accepted · **Slice:** Pre-1
+**Context.** Greenfield codebase; team of ~1–3; six bounded contexts in the PRD (search, media, users, favorites, channels, developer).
+**Decision.** Single Spring Boot deployable with package-by-feature boundaries (`com.flashgif.search`, `…media`, etc.). Modules talk only via service interfaces; no cross-module repository access. ArchUnit enforcement deferred.
+**Rationale.** Microservices day-one would pay all the operational tax (six deploy targets, six runbooks, six dashboards, distributed tracing, schema-evolution coordination) for none of the scaling benefit at our size. Module boundaries inside one process give us the extraction option without the cost.
+**Consequences.** Single CI build, single deploy, single observability surface. When (if) load justifies extraction we have natural seams (e.g. transcode worker → standalone) without refactoring domains.
+**Trigger to revisit.** Any single module needs >10× the deployment cadence of the others, or its scaling profile diverges (GPU for transcode, isolated rate-limit infra for dev API).
+
+#### ADR-002: PostgreSQL as the system of record
+**Status:** Accepted · **Slice:** 1
+**Context.** Need ACID for user accounts, media metadata, refresh tokens; JSONB fields (`rendition_urls`, `social_links`) are useful but not the dominant pattern; relational integrity (FK cascades on user/media delete) matters.
+**Decision.** Postgres 16 + Flyway migrations + Spring Data JPA.
+**Rationale.** Mongo or a document store would force manual integrity or 2PC-equivalents. Postgres handles our scale (100M rows) on a single primary comfortably; JSONB columns give us schemaless escape hatches without giving up ACID.
+**Consequences.** Schema evolution requires forward-compatible migrations (we use the expand/contract pattern). Read replicas + connection pool tuning are the natural first scaling lever.
+
+#### ADR-003: Elasticsearch as a read-only secondary, synced via outbox
+**Status:** Accepted · **Slice:** 1
+**Context.** Postgres FTS handles match + stem but not (a) typo-tolerant fuzzy search, (b) `search_as_you_type` autocomplete with edge n-grams, (c) ranking that blends relevance with a recomputed popularity score via `function_score`.
+**Decision.** Separate Elasticsearch cluster holding a denormalised `media_v1` index, kept in sync from Postgres via the transactional outbox pattern.
+**Rationale.** Two storage engines for two access patterns. Postgres for the authoritative write path; ES for the read-mostly search path. The outbox eliminates the dual-write problem.
+**Consequences.** Eventual consistency on the search index (p95 lag ≤5s via the 2-second poller). Operational cost: a second stateful service to monitor, back up, and reindex.
+
+#### ADR-004: Transactional outbox over CDC for ES sync
+**Status:** Accepted · **Slice:** 1
+**Context.** Need to bridge Postgres writes to Elasticsearch without dual-write inconsistency.
+**Decision.** Application writes an `outbox_events` row in the same transaction as the domain change. A scheduled poller drains the outbox and writes to ES.
+**Rationale.** Outbox is simpler to operate than Debezium + Kafka Connect, gives us application-level control over event shapes, and is portable across DBs. CDC becomes interesting at much larger scale or when many consumers want the same event stream.
+**Consequences.** One scheduled task to monitor (lag metric). At-least-once delivery → consumers must be idempotent (ES upserts are, by id).
+**Trigger to revisit.** A second consumer needs the same event stream (analytics, notifications), AND combined throughput exceeds the poller's batch capacity.
+
+#### ADR-005: RabbitMQ over Kafka for the transcode queue
+**Status:** Accepted · **Slice:** 2
+**Context.** Single producer (the upload completion path), single consumer pool (FFmpeg workers); ≤10/s sustained throughput; no replay requirements.
+**Decision.** RabbitMQ direct exchange + durable queue + DLQ. Persistent messages, prefetch=1, default-requeue-rejected=false.
+**Rationale.** Kafka shines at high throughput, replay, and many-consumer fan-out. None apply here. RabbitMQ is operationally simpler, has good Spring AMQP integration, and is appropriate to scale.
+**Consequences.** If we ever need event-sourced workflows (e.g. user activity → analytics + recommendations + notifications), we'll add Kafka alongside Rabbit, not replace it.
+
+#### ADR-006: JWT access + opaque refresh tokens (mixed mode)
+**Status:** Accepted · **Slice:** 3
+**Context.** Need stateless access checks (so every request doesn't hit the DB) but easy revocation on account compromise.
+**Decision.** Access token = HS256 JWT, 15-min TTL, validated locally. Refresh token = 256-bit opaque random, SHA-256 hashed in `refresh_tokens` table, 30-day rotating.
+**Rationale.** JWT access gives us stateless validation. Opaque refresh gives us trivial revocation (delete the row) without a JWT blacklist defeating the stateless benefit. Mixed mode is intentional.
+**Consequences.** Revocation lag = at most 15 minutes (access TTL). For instantaneous revocation we'd need a Redis-backed deny list keyed on `jti`, checked by the JWT filter; the structure supports adding this later without code change.
+
+#### ADR-007: httpOnly cookies via Next.js Route Handler proxy (not localStorage)
+**Status:** Accepted · **Slice:** Web 2
+**Context.** Web client needs to attach the access token to backend requests; browser must NOT be able to exfiltrate tokens via XSS.
+**Decision.** Tokens stored only in httpOnly cookies set by Next.js Route Handlers. Browser-side code calls same-origin Next.js routes; route handlers read the cookie and forward to Spring with `Authorization: Bearer`.
+**Rationale.** httpOnly is the only XSS-proof storage. Route Handler proxying keeps the architecture clean (no special CORS, no token-in-URL flows). Costs one same-origin hop per call.
+**Consequences.** Every authed endpoint needs a Route Handler (boilerplate cut via `proxyToBackend` helper). Public endpoints stay direct to Spring to avoid the hop. The cookie is path-scoped: refresh cookie only goes to `/api/auth/*`.
+
+#### ADR-008: SHA-256 (not BCrypt) for refresh tokens and API keys
+**Status:** Accepted · **Slice:** 3, 6
+**Context.** Refresh tokens and API keys are 256-bit random, generated server-side.
+**Decision.** Store `SHA-256(rawToken)` as bytea. Lookup is hash-equality.
+**Rationale.** BCrypt's value is slowing down brute-force of low-entropy human-chosen passwords. High-entropy random tokens are brute-force-infeasible regardless of hash cost. BCrypt on a 256-bit secret adds ~100ms per auth check for zero security benefit.
+**Consequences.** Lookups are constant-time. Same algorithm used in two places (`refresh_tokens.token_hash`, `developer_keys.key_hash`) — consistent mental model.
+
+#### ADR-009: Two SecurityFilterChain beans, scoped by path
+**Status:** Accepted · **Slice:** 3, 6
+**Context.** End users authenticate via JWT, third-party developers via API key, and the two should have distinct rate limits + filters.
+**Decision.** `@Order(1) developerChain` with `securityMatcher("/api/v1/developer/**")`; `@Order(2) userChain` as the catch-all. Spring routes requests to the first matching chain.
+**Rationale.** One chain trying to handle both credential types would be confusing and would couple rate-limit decisions to credential-decoding decisions. Per-chain configuration is cleaner.
+**Consequences.** Key management endpoints (`/api/v1/auth/developer/keys`) deliberately stay in the user chain — issuing a key is a user operation, not a key operation.
+
+#### ADR-010: Pessimistic locking for counter mutations
+**Status:** Accepted · **Slice:** 4
+**Context.** `media.favorite_count` is mutated on every favorite/unfavorite; high contention on viral content.
+**Decision.** `SELECT … FOR UPDATE` via `@Lock(PESSIMISTIC_WRITE)` before incrementing.
+**Rationale.** Optimistic locking + retry-on-conflict compounds into retry storms under hot contention. Pessimistic serialises the writes — backpressure becomes the observable effect, not lost updates.
+**Consequences.** Slight throughput cap on hot rows. Mitigation paths if it bites: (a) move counter to Redis with periodic flush, (b) batch-fold per-second favorite deltas.
+
+#### ADR-011: In-memory token bucket rate limiter (not Bucket4j-Redis yet)
+**Status:** Deferred · **Slice:** 6
+**Context.** Developer API needs per-key rate limiting (60 req/min default). Multi-instance deployment would require distributed counter state.
+**Decision.** Hand-rolled token bucket in `ConcurrentHashMap<UUID, Bucket>` for now. Bucket4j-Redis is the documented upgrade path.
+**Rationale.** Single-instance correct today; avoids dep-resolution risk (we hit issues with Bucket4j coords in Slice 0); no Redis round-trip per request.
+**Consequences.** Rate-limit state is lost on pod restart (effectively resets all buckets to full). Acceptable in dev; would mean burst capacity on first request after deploy in prod.
+**Trigger to revisit.** Second API pod is provisioned, OR rate-limit accuracy becomes a customer-facing SLA.
+
+#### ADR-012: Per-prefix S3 bucket policy (renditions public, uploads private)
+**Status:** Accepted · **Slice:** 2 (latent bug; fixed in session 11)
+**Context.** Renditions are CDN-style content (anyone with the URL should be able to GET them). Originals are private uploader assets.
+**Decision.** Bucket policy on `flashgif-media` allows `s3:GetObject` from `*` on `renditions/*` only. `uploads/*` remains private; backend signs read URLs as needed.
+**Rationale.** Public renditions cache trivially in any CDN. Private originals keep the source asset under uploader control.
+**Consequences.** Bucket policy is applied idempotently in `BucketBootstrapper` on every startup. In production the same prefix policy is set on the real S3 bucket via IaC; CDN fronts `renditions/*`.
+
+#### ADR-013: Direct browser → S3 upload via presigned PUT (not proxy through backend)
+**Status:** Accepted · **Slice:** 2
+**Context.** Up to 100 MB file uploads; backend must not become a bandwidth bottleneck.
+**Decision.** Backend issues short-lived (15-min) presigned PUT URL; browser uploads directly to S3.
+**Rationale.** A 50 MB upload via backend ties up an API pod's connection and bandwidth for the upload duration. Presigned URLs offload the bytes entirely.
+**Consequences.** Browser → S3 traffic doesn't traverse our backend. Two extra round trips at the start (reserve, complete) but they're tiny.
+
+#### ADR-014: Explicit `/complete` callback (not S3 event notifications)
+**Status:** Accepted · **Slice:** 2
+**Context.** Need to know when the browser's PUT to S3 finished so we can enqueue transcode.
+**Decision.** Client POSTs `/api/v1/media/upload/{id}/complete` after a successful PUT. Backend HEADs S3 to verify object presence, then enqueues.
+**Rationale.** S3 events are async and not deduplicated; client-driven completion is explicit, testable, and retryable. S3 events are appropriate when there's no client (e.g. third-party drop-in uploads).
+**Consequences.** If the client crashes between PUT and `/complete`, the upload row stays in `AWAITING_UPLOAD` indefinitely. A sweeper job is the deferred mitigation.
+
+#### ADR-015: Two-table upload state machine (`media_uploads` + `media`)
+**Status:** Accepted · **Slice:** 2
+**Context.** Uploads go through several states before becoming searchable media. Failed/abandoned uploads should never pollute the searchable corpus.
+**Decision.** `media_uploads` table holds the pipeline state machine (`AWAITING_UPLOAD → UPLOADED → PROCESSING → READY → PUBLISHED`, with `FAILED` terminal). `media` table is created only on successful metadata submission; it's what's indexed in ES.
+**Rationale.** Separates concerns — pipeline lifecycle vs published-entity. Search code never has to filter out half-baked uploads.
+**Consequences.** Two tables, two services (`UploadService`, `PublishService`). One extra row per published media. Worth it.
+
+#### ADR-016: snake_case JSON across the entire public API
+**Status:** Accepted (post-correction) · **Slice:** Web 1 + follow-up
+**Context.** `@Schema(name = "...")` annotations documented snake_case names in the OpenAPI spec, but Jackson was emitting camelCase by default, creating a contract mismatch.
+**Decision.** `spring.jackson.property-naming-strategy: SNAKE_CASE` globally. TS types match. The OpenAPI spec is now accurate.
+**Rationale.** snake_case is the dominant REST convention (Stripe, GitHub, etc.). Aligning the wire format with the documented spec keeps third-party developers' tooling honest.
+**Consequences.** Field names like `User.isVerified` (Lombok strips `is`) become `verified`, not `is_verified` — worth knowing. `Map<String, String>` keys are NOT transformed (Jackson naming strategy only affects bean properties), which keeps outbox payload keys stable.
+
+#### ADR-017: shadcn/ui (copy-paste components) over an off-the-shelf UI library
+**Status:** Accepted · **Slice:** Web 1
+**Context.** Need a component library that's themeable and won't lock us into a specific design system.
+**Decision.** Drop shadcn/ui-style primitives (Button, Input) directly into `components/ui/`. No runtime UI library dependency.
+**Rationale.** We own the source; theming is via Tailwind CSS variables; no dep upgrades to chase; no bundle-size cost we can't see in our own code.
+**Consequences.** We're responsible for accessibility + ARIA on our primitives. shadcn's templates handle this; we use them verbatim.
+
+#### ADR-018: `openapi-typescript` (types only) over a full client generator
+**Status:** Accepted · **Slice:** Web 1
+**Context.** Need TypeScript types for backend response shapes so the client compiles cleanly against the API contract.
+**Decision.** `openapi-typescript` to generate `lib/api/types.ts`. We hand-write thin `fetch` wrappers (`apiFetch`, `authedFetch`) on top.
+**Rationale.** Full client generators (Orval, openapi-fetch) generate hooks, validators, runtime stubs — more dep surface, harder to customize, especially around our cookie-proxy auth model.
+**Consequences.** Two-stage type-safety: openapi types describe the wire; our hand-written endpoint functions describe what we actually call. Drift between the two is caught when the generated types fail to assign.
+
+#### ADR-019: React Query for server state, Zustand for ephemeral UI state
+**Status:** Accepted · **Slice:** Web 1
+**Context.** Two distinct categories of state — server-derived (caches, refetches, mutations) and ephemeral UI (modal open, theme).
+**Decision.** TanStack Query owns everything that comes from the backend. Zustand handles tiny UI state needs (~1 KB lib).
+**Rationale.** Mixing server state into Redux/Zustand has been the standard footgun for years; React Query was built specifically to fix that. Zustand for the truly local state stays out of React Query's way.
+**Consequences.** Devs need to know which lives where. The rule of thumb: "if it can be re-fetched, it's React Query".
+
+#### ADR-020: Next.js App Router with server components for SEO-critical pages
+**Status:** Accepted · **Slice:** Web 1, 5
+**Context.** Trending, search, and channel pages benefit from SEO indexing. Auth and dashboard pages don't.
+**Decision.** App Router. Pages default to server components; client components opt in with `"use client"`. SEO pages SSR; interactive pages are client islands.
+**Rationale.** Server components stream HTML that already has data — no spinner-then-content. SEO crawlers index real content. App Router's Route Handlers also give us the auth proxy.
+**Consequences.** "Mixed module" patterns (e.g., `lib/api/channels.ts` has both server-callable and client-only functions) need careful directive placement.
+
+#### ADR-021: Per-rendition non-fatal transcode (not all-or-nothing)
+**Status:** Accepted (post-bug) · **Slice:** 2 + session 11 fix
+**Context.** Original Slice 2 design failed the whole transcode job if any single encoder errored. Realistic FFmpeg installs have varying encoder coverage (Homebrew lacks `libwebp` by default).
+**Decision.** Each rendition runs in a `tryRendition(…)` wrapper. Per-encoder failure logs a warning and skips. The job only fails (and routes to DLQ) when *all* renditions fail.
+**Rationale.** Transcoder pipelines should default to "best-effort per output". `MediaCard` already falls back webp → gif → poster, so a missing rendition is invisible to users.
+**Consequences.** Adding new renditions (HD, vertical, etc.) inherits the resilience for free. Operations: alarm on "all-renditions-failed" rate, not individual rendition failures.
+
+#### ADR-022: Avoid Postgres-vendor column types in app-facing schemas
+**Status:** Accepted (post-bug) · **Slice:** 3 + session 4 fix
+**Context.** Initial schemas used `citext` (email) and `inet` (refresh_tokens.ip) because they were the "right" Postgres types. Hibernate's strict schema validator rejected the JDBC type mismatch (String → VARCHAR vs CITEXT/INET → OTHER).
+**Decision.** Default to portable column types (`varchar`) and handle case-insensitivity or IP-formatting at the app layer (e.g., `UserService.normalizeEmail()`).
+**Rationale.** Vendor-specific types create friction with ORMs that assume JDBC-standard mappings. The portable choice keeps tests, ORMs, and replication tooling happier; the small app-layer cost is worth it.
+**Consequences.** `users.email` is `varchar(254)` with lowercase normalization; `refresh_tokens.ip` is `varchar(45)` (IPv6 max). No CITEXT/INET-specific operators available — fine for our patterns.
+
+#### ADR-023: Publish-after-commit pattern for async event dispatch
+**Status:** Accepted (post-bug) · **Slice:** 2 + session 11 fix
+**Context.** `UploadService.markUploaded` was `@Transactional` and called `dispatcher.dispatch(...)` directly inside the transaction. The RabbitMQ consumer (same JVM) raced ahead and read the upload row before the writing tx had committed, seeing stale state.
+**Decision.** Wrap the dispatch in `TransactionSynchronizationManager.registerSynchronization(...) { afterCommit() }`. The Rabbit publish only happens after the JDBC commit.
+**Rationale.** "Publish after commit" is the textbook pattern for fire-and-forget side effects on writes. The consumer sees the committed state and the state-machine transition succeeds.
+**Consequences.** Any future service method that publishes to RabbitMQ/Kafka/whatever from inside a `@Transactional` boundary must use the same pattern. Generalising via Spring's `@TransactionalEventListener(AFTER_COMMIT)` is the cleaner upgrade if we add 3+ sites.
+
+#### ADR-024: Redis cache with default-typed `ObjectMapper` (separate from web mapper)
+**Status:** Accepted (post-bug) · **Slice:** 1 + session 8 fix
+**Context.** `GenericJackson2JsonRedisSerializer` initialised with the default web `ObjectMapper` lost generic type info: `List<MediaSummary>` round-tripped as `List<LinkedHashMap>`, blowing up the subsequent HTTP serialization with `IllegalArgumentException: object is not an instance of declaring class`.
+**Decision.** A dedicated cache `ObjectMapper` with `activateDefaultTyping(...)` + a `BasicPolymorphicTypeValidator` allowing `com.flashgif.`, `java.util.`, `java.time.`. Cache values now carry `@class` metadata; HTTP responses stay clean (separate mapper, no `@class` pollution).
+**Rationale.** Type info has to survive a serialize/deserialize round-trip; without it, generic types erase to LinkedHashMap. Two mappers keep cache concerns out of the wire format.
+**Consequences.** Cache invalidation on type renames/moves: `FLUSHDB` is the safe step. Documented in the runbook.
+
+#### ADR-025: Modal/page split for the upload UX (modal trigger from header "+")
+**Status:** Accepted · **Slice:** Web 3
+**Context.** Pinterest/Giphy/Tenor-style upload UX is contextual — you stay on the page you were browsing.
+**Decision.** Header `+ Upload` button (auth-only) opens a 3-stage modal (dropzone → upload+poll → metadata form). On publish success, redirect to `/channels/[me.username]`.
+**Rationale.** Modal preserves user context. Single modal handles the entire pipeline so the user sees one cohesive flow.
+**Consequences.** Modal must be viewport-aware (we cap at `max-h-[90vh]` with internal scroll). Mobile users get the same modal — works on small screens because of the cap.
+
+#### ADR-026: Server-side SSR pre-fill for `useMe` (no Login → UserMenu flash)
+**Status:** Accepted · **Slice:** Web 2
+**Context.** First paint shouldn't flash "Login / Sign up" buttons to a logged-in user.
+**Decision.** Root `layout.tsx` is a server component that reads the cookie, calls Spring `/users/me` server-side, and seeds React Query with the result. Header receives the user as a prop and is correct on first render.
+**Rationale.** The cost is one server-to-server call per page render. The UX win is significant — no perceived "loading" period for an authenticated user.
+**Consequences.** Server-side `getCurrentUser()` bypasses the Route Handler proxy (direct to Spring). One more place that needs to know about Spring's URL.
+
+#### ADR-027: Optimistic mutations for favorites (snapshot + rollback)
+**Status:** Accepted · **Slice:** Web 4
+**Context.** Heart-button click should feel instant; backend round-trip is ~100ms.
+**Decision.** React Query `useMutation` with `onMutate` snapshot, optimistic cache update, `onError` rollback, `onSettled` invalidation. The card flips state instantly.
+**Rationale.** Favoriting is idempotent — the worst case on failure is one click "didn't take" and the user retries. Worth the perceived-speed win.
+**Consequences.** Any operation we make optimistic must be idempotent and have a cheap rollback. Document the pattern; don't apply to writes with side effects (e.g., publishing media).
+
+#### ADR-028: Defer `GET /api/v1/media/{id}` (favorites + collection items show placeholders)
+**Status:** Deferred · **Slice:** Web 4
+**Context.** Favorites and collection-items endpoints return `media_id`s; web has no way to rehydrate full media rows from just IDs without a per-id backend endpoint.
+**Decision.** Render `MediaTilePlaceholder` (ID + timestamp) for now. Add `GET /api/v1/media/{id}` as a follow-up, then swap the placeholder for `<MediaCard>`.
+**Rationale.** Shipping Slice 4 with full visuals would block on a backend change; shipping with placeholders unblocks the rest of the slice immediately.
+**Consequences.** Favorites page is functional but ugly. Single backend endpoint + one React Query hook closes the gap.
+**Trigger to revisit.** Any user feedback about the favorites page looking unfinished, OR before mobile clients start consuming favorites.
+
+#### ADR-029: Hand-roll Next.js scaffold (skip `create-next-app`)
+**Status:** Accepted · **Slice:** Web 1
+**Context.** `create-next-app` is interactive, opinionated about ESLint/Prettier configs, and tends to include boilerplate we'd have to remove.
+**Decision.** Hand-wrote `package.json` + `tsconfig.json` + `next.config.mjs` + `tailwind.config.ts` + `postcss.config.mjs` + `globals.css` directly. Pinned exact versions.
+**Rationale.** Cleaner starting state, exact dep versions, no template artifacts. ~10 minutes saved vs cleanup.
+**Consequences.** When we upgrade Next majors we update the configs manually rather than re-running the generator. Fine — we're not far enough from the template that the diff is meaningful.
+
+#### ADR-030: Defer Testcontainers integration tests (acknowledged debt)
+**Status:** Deferred · **Slice:** 0
+**Context.** Unit tests cover the easy stuff; the bugs that actually bite are at the integration boundaries (DB, Rabbit, S3, ES). Testcontainers would catch most of them at `./gradlew build` time.
+**Decision.** Defer until a slice without a feature deadline. Document the debt visibly in every bug post-mortem.
+**Rationale.** Initial velocity over correctness investment. Six backend slices in 7 days proves the velocity hypothesis was right.
+**Consequences.** **Nine production-relevant bugs caught this session alone** (Bugs 1–9 in progress.md), every one would have been caught by integration tests. The deferred-tests debt is the largest unpaid liability in the system. Prioritize before any new feature work.
+**Trigger to revisit.** As soon as no feature is mid-flight.
+
+---
+
+#### Summary index
+
+| ADR | Title | Status |
+|---|---|---|
+| 001 | Modular monolith over microservices | Accepted |
+| 002 | PostgreSQL as system of record | Accepted |
+| 003 | Elasticsearch as read-only secondary | Accepted |
+| 004 | Transactional outbox over CDC | Accepted |
+| 005 | RabbitMQ over Kafka | Accepted |
+| 006 | JWT access + opaque refresh (mixed mode) | Accepted |
+| 007 | httpOnly cookies via Next.js Route Handler proxy | Accepted |
+| 008 | SHA-256 (not BCrypt) for high-entropy tokens | Accepted |
+| 009 | Two SecurityFilterChain beans, scoped by path | Accepted |
+| 010 | Pessimistic locking for counter mutations | Accepted |
+| 011 | In-memory token bucket (not Bucket4j-Redis yet) | Deferred |
+| 012 | Per-prefix S3 bucket policy | Accepted |
+| 013 | Direct browser → S3 presigned PUT upload | Accepted |
+| 014 | Explicit `/complete` callback over S3 events | Accepted |
+| 015 | Two-table upload state machine | Accepted |
+| 016 | snake_case JSON across public API | Accepted |
+| 017 | shadcn/ui (copy-paste) over UI library | Accepted |
+| 018 | `openapi-typescript` types only (no client gen) | Accepted |
+| 019 | React Query for server state + Zustand for UI | Accepted |
+| 020 | Next.js App Router + server components | Accepted |
+| 021 | Per-rendition non-fatal transcode | Accepted |
+| 022 | Avoid Postgres-vendor column types | Accepted |
+| 023 | Publish-after-commit for async dispatch | Accepted |
+| 024 | Default-typed cache `ObjectMapper` (separate) | Accepted |
+| 025 | Modal upload UX, post-publish redirect to channel | Accepted |
+| 026 | SSR pre-fill for `useMe` (no flash) | Accepted |
+| 027 | Optimistic favorite mutations (snapshot + rollback) | Accepted |
+| 028 | Defer `GET /media/{id}` (placeholder tiles) | Deferred |
+| 029 | Hand-roll Next.js scaffold | Accepted |
+| 030 | Defer Testcontainers integration tests | Deferred (debt) |
