@@ -1,0 +1,1355 @@
+openapi: 3.0.1
+info:
+  title: FlashGif API
+  description: Public and developer-facing API for the FlashGif platform.
+  contact:
+    name: FlashGif
+    url: https://flashgif.example
+  license:
+    name: Proprietary
+  version: v1
+servers:
+- url: http://localhost:8080
+  description: Local
+- url: https://api.flashgif.example
+  description: Production
+tags:
+- name: Collections
+  description: "Owned, named folders of media."
+- name: Search
+  description: "Keyword search, trending, and autocomplete."
+- name: Favorites
+  description: Per-user flat favorites list.
+- name: Users
+  description: Current user profile.
+- name: Channels
+  description: Public creator profiles + upload history.
+- name: Developer Search
+  description: Third-party-facing search via API key.
+- name: Developer Keys
+  description: Issue and manage API keys for third-party integrations.
+- name: Media Upload
+  description: Direct-to-S3 upload orchestration and transcode status.
+- name: Authentication
+  description: "Email/password registration, login, refresh, logout."
+- name: Developer Usage
+  description: Per-key and aggregate usage analytics.
+- name: Media Metadata
+  description: Publishes a READY upload as a searchable media entity.
+paths:
+  /api/v1/media/upload:
+    post:
+      tags:
+      - Media Upload
+      summary: Create an upload slot and return a presigned PUT URL.
+      operationId: create
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/UploadResponse"
+  /api/v1/media/upload/{uploadId}/complete:
+    post:
+      tags:
+      - Media Upload
+      summary: Signal that the browser finished PUTting the file. Triggers transcode.
+      operationId: complete
+      parameters:
+      - name: uploadId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "202":
+          description: Accepted
+  /api/v1/media/metadata:
+    post:
+      tags:
+      - Media Metadata
+      summary: "Submit title, tags, rating for a READY upload; creates the Media row\
+        \ + triggers indexing."
+      operationId: submit
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MetadataRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PublishResponse"
+  /api/v1/favorites:
+    post:
+      tags:
+      - Favorites
+      summary: Favorite a media. Idempotent.
+      operationId: favorite
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FavoriteRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+      security:
+      - bearer-jwt: []
+  /api/v1/collections:
+    post:
+      tags:
+      - Collections
+      summary: Create a new collection owned by the current user.
+      operationId: create_1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectionCreateRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/collections/{id}/items:
+    get:
+      tags:
+      - Collections
+      summary: Paged items in a collection. Owner can read private; everyone can read
+        public.
+      operationId: items
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PagedResponseCollectionItemResponse"
+    post:
+      tags:
+      - Collections
+      summary: "Owner-only: add a media to the collection. Idempotent."
+      operationId: addItem
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectionItemRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+      security:
+      - bearer-jwt: []
+  /api/v1/auth/register:
+    post:
+      tags:
+      - Authentication
+      summary: Create a new account and return an initial credential pair.
+      operationId: register
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v1/auth/refresh:
+    post:
+      tags:
+      - Authentication
+      summary: Rotate a refresh token for a fresh access+refresh pair. Old refresh
+        is revoked.
+      operationId: refresh
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v1/auth/logout:
+    post:
+      tags:
+      - Authentication
+      summary: Revoke a refresh token. Access tokens remain valid until they expire.
+      operationId: logout
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+        required: true
+      responses:
+        "204":
+          description: No Content
+  /api/v1/auth/login:
+    post:
+      tags:
+      - Authentication
+      summary: Exchange credentials for a JWT access token + refresh token.
+      operationId: login
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+  /api/v1/auth/developer/keys:
+    get:
+      tags:
+      - Developer Keys
+      summary: List the current user's API keys (metadata only).
+      operationId: list_1
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/KeyResponse"
+      security:
+      - bearer-jwt: []
+    post:
+      tags:
+      - Developer Keys
+      summary: Issue a new API key. Raw key returned only once.
+      operationId: create_2
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateKeyRequest"
+        required: true
+      responses:
+        "201":
+          description: Created
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/IssuedKeyResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/users/me:
+    get:
+      tags:
+      - Users
+      summary: Return the current authenticated user's profile.
+      operationId: me
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+      security:
+      - bearer-jwt: []
+    patch:
+      tags:
+      - Users
+      summary: Update the current user's display name.
+      operationId: updateMe
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMeRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/collections/{id}:
+    get:
+      tags:
+      - Collections
+      summary: Fetch a single collection. Owner can read private; everyone can read
+        public.
+      operationId: get_1
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+    delete:
+      tags:
+      - Collections
+      summary: "Owner-only: delete collection (items cascade)."
+      operationId: delete
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearer-jwt: []
+    patch:
+      tags:
+      - Collections
+      summary: "Owner-only: rename, edit description, toggle visibility."
+      operationId: update
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CollectionUpdateRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/CollectionResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/channels/profile:
+    patch:
+      tags:
+      - Channels
+      summary: Update the current user's profile fields.
+      operationId: updateProfile
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateProfileRequest"
+        required: true
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/users/{username}/collections:
+    get:
+      tags:
+      - Collections
+      summary: List a user's public collections by username. No auth required.
+      operationId: listPublicFor
+      parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CollectionResponse"
+  /api/v1/users/me/favorites:
+    get:
+      tags:
+      - Favorites
+      summary: "List the current user's favorites, newest first."
+      operationId: list
+      parameters:
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PagedResponseFavoriteResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/users/me/collections:
+    get:
+      tags:
+      - Collections
+      summary: List all of the current user's collections (public + private).
+      operationId: listOwn
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CollectionResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/usage/analytics:
+    get:
+      tags:
+      - Developer Usage
+      summary: Daily request counts for one key or all of the user's keys.
+      operationId: get
+      parameters:
+      - name: keyId
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: days
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 30
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/UsageAnalyticsResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/trending:
+    get:
+      tags:
+      - Search
+      summary: "Trending media, sorted by popularity."
+      operationId: trending
+      parameters:
+      - name: type
+        in: query
+        description: "Filter by type: gif or sticker. Omit for all."
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaSummary"
+  /api/v1/search:
+    get:
+      tags:
+      - Search
+      summary: Keyword search across published media.
+      operationId: search
+      parameters:
+      - name: q
+        in: query
+        description: Query terms. Empty falls through to trending.
+        required: false
+        schema:
+          type: string
+      - name: type
+        in: query
+        description: "Filter by type: gif or sticker."
+        required: false
+        schema:
+          type: string
+      - name: sort
+        in: query
+        description: "Sort mode: relevance (default) or recency."
+        required: false
+        schema:
+          type: string
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+  /api/v1/search/suggestions:
+    get:
+      tags:
+      - Search
+      summary: Autocomplete suggestions for a prefix.
+      operationId: suggestions
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SuggestionsResponse"
+  /api/v1/media/status/{uploadId}:
+    get:
+      tags:
+      - Media Upload
+      summary: Poll for transcode status and rendition URLs.
+      operationId: status
+      parameters:
+      - name: uploadId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/UploadStatusResponse"
+  /api/v1/developer/trending:
+    get:
+      tags:
+      - Developer Search
+      summary: Trending media (API-key authenticated).
+      operationId: trending_1
+      parameters:
+      - name: type
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaSummary"
+      security:
+      - bearer-jwt: []
+  /api/v1/developer/search:
+    get:
+      tags:
+      - Developer Search
+      summary: Keyword search (API-key authenticated).
+      operationId: search_1
+      parameters:
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: type
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: sort
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SearchResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/developer/search/suggestions:
+    get:
+      tags:
+      - Developer Search
+      summary: Autocomplete suggestions (API-key authenticated).
+      operationId: suggestions_1
+      parameters:
+      - name: q
+        in: query
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/SuggestionsResponse"
+      security:
+      - bearer-jwt: []
+  /api/v1/channels/{username}:
+    get:
+      tags:
+      - Channels
+      summary: "Public channel: profile, upload count, top-5 most-favorited media."
+      operationId: get_2
+      parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/ChannelResponse"
+  /api/v1/channels/{username}/media:
+    get:
+      tags:
+      - Channels
+      summary: Paged published-only upload history for the given channel.
+      operationId: media
+      parameters:
+      - name: username
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: page
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 0
+      - name: size
+        in: query
+        required: false
+        schema:
+          type: integer
+          format: int32
+          default: 20
+      responses:
+        "200":
+          description: OK
+          content:
+            '*/*':
+              schema:
+                $ref: "#/components/schemas/PagedResponseMediaSummary"
+  /api/v1/favorites/{mediaId}:
+    delete:
+      tags:
+      - Favorites
+      summary: Remove a favorite. Idempotent.
+      operationId: unfavorite
+      parameters:
+      - name: mediaId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearer-jwt: []
+  /api/v1/collections/{id}/items/{mediaId}:
+    delete:
+      tags:
+      - Collections
+      summary: "Owner-only: remove a media from the collection."
+      operationId: removeItem
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: mediaId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearer-jwt: []
+  /api/v1/auth/developer/keys/{id}:
+    delete:
+      tags:
+      - Developer Keys
+      summary: Revoke an API key. Subsequent calls with that key return 401.
+      operationId: revoke
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        "204":
+          description: No Content
+      security:
+      - bearer-jwt: []
+components:
+  schemas:
+    UploadRequest:
+      required:
+      - contentType
+      - filename
+      type: object
+      properties:
+        filename:
+          maxLength: 255
+          minLength: 0
+          type: string
+        contentType:
+          maxLength: 64
+          minLength: 0
+          type: string
+        size:
+          type: integer
+          format: int64
+    UploadResponse:
+      type: object
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        s3Key:
+          type: string
+        presignedUrl:
+          type: string
+          description: Presigned PUT URL. Use HTTP PUT with the file body and the
+            same Content-Type.
+        expiresAt:
+          type: string
+          format: date-time
+      description: Presigned-URL bundle to PUT the original file to S3.
+    MetadataRequest:
+      required:
+      - title
+      - type
+      - uploadId
+      type: object
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        title:
+          maxLength: 200
+          minLength: 0
+          type: string
+        description:
+          maxLength: 4000
+          minLength: 0
+          type: string
+        type:
+          pattern: gif|sticker
+          type: string
+        contentRating:
+          pattern: g|pg|pg13|r
+          type: string
+        tags:
+          maxItems: 20
+          minItems: 0
+          uniqueItems: true
+          type: array
+          items:
+            type: string
+    PublishResponse:
+      type: object
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        uploadId:
+          type: string
+          format: uuid
+    FavoriteRequest:
+      required:
+      - mediaId
+      type: object
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+    CollectionCreateRequest:
+      required:
+      - name
+      type: object
+      properties:
+        name:
+          maxLength: 100
+          minLength: 1
+          type: string
+        description:
+          maxLength: 4000
+          minLength: 0
+          type: string
+        isPublic:
+          type: boolean
+    CollectionResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        ownerId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        description:
+          type: string
+        isPublic:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    CollectionItemRequest:
+      required:
+      - mediaId
+      type: object
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+    RegisterRequest:
+      required:
+      - displayName
+      - email
+      - password
+      - username
+      type: object
+      properties:
+        email:
+          maxLength: 254
+          minLength: 0
+          type: string
+        username:
+          pattern: "^[a-zA-Z0-9_]{3,30}$"
+          type: string
+        password:
+          maxLength: 200
+          minLength: 12
+          type: string
+        displayName:
+          maxLength: 50
+          minLength: 1
+          type: string
+    AuthResponse:
+      type: object
+      properties:
+        accessToken:
+          type: string
+        expiresInSeconds:
+          type: integer
+          format: int64
+        refreshToken:
+          type: string
+        tokenType:
+          type: string
+      description: Issued credential pair. Access token is a JWT; refresh token is
+        an opaque random string.
+    RefreshRequest:
+      required:
+      - refreshToken
+      type: object
+      properties:
+        refreshToken:
+          type: string
+    LoginRequest:
+      required:
+      - email
+      - password
+      type: object
+      properties:
+        email:
+          type: string
+        password:
+          type: string
+    CreateKeyRequest:
+      required:
+      - name
+      type: object
+      properties:
+        name:
+          maxLength: 100
+          minLength: 1
+          type: string
+    IssuedKeyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        key:
+          type: string
+          description: The raw API key. Cannot be retrieved again.
+      description: Issued key. The raw key is returned exactly ONCE — store it now;
+        we only keep a hash.
+    UpdateMeRequest:
+      required:
+      - displayName
+      type: object
+      properties:
+        displayName:
+          maxLength: 50
+          minLength: 1
+          type: string
+    MeResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+        username:
+          type: string
+        displayName:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    CollectionUpdateRequest:
+      type: object
+      properties:
+        name:
+          maxLength: 100
+          minLength: 1
+          type: string
+        description:
+          maxLength: 4000
+          minLength: 0
+          type: string
+        isPublic:
+          type: boolean
+    UpdateProfileRequest:
+      type: object
+      properties:
+        displayName:
+          maxLength: 50
+          minLength: 1
+          type: string
+        bio:
+          maxLength: 4000
+          minLength: 0
+          type: string
+        websiteUrl:
+          maxLength: 255
+          minLength: 0
+          type: string
+        avatarUrl:
+          maxLength: 500
+          minLength: 0
+          type: string
+        bannerUrl:
+          maxLength: 500
+          minLength: 0
+          type: string
+        socialLinks:
+          type: object
+          additionalProperties:
+            type: string
+    ChannelResponse:
+      type: object
+      properties:
+        username:
+          type: string
+        displayName:
+          type: string
+        bio:
+          type: string
+        websiteUrl:
+          type: string
+        avatarUrl:
+          type: string
+        bannerUrl:
+          type: string
+        socialLinks:
+          type: object
+          additionalProperties:
+            type: string
+        isVerified:
+          type: boolean
+        uploadCount:
+          type: integer
+          format: int64
+        topMedia:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaSummary"
+        createdAt:
+          type: string
+          format: date-time
+    MediaSummary:
+      type: object
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        type:
+          type: string
+        content_rating:
+          type: string
+        view_count:
+          type: integer
+          format: int64
+        favorite_count:
+          type: integer
+          format: int64
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+        rendition_urls:
+          type: object
+          additionalProperties:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+      description: Compact media projection returned by search/trending/channel endpoints.
+    FavoriteResponse:
+      type: object
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+    PagedResponseFavoriteResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/FavoriteResponse"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        total:
+          type: integer
+          format: int64
+    DayCount:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        count:
+          type: integer
+          format: int64
+    UsageAnalyticsResponse:
+      type: object
+      properties:
+        keyId:
+          type: string
+          format: uuid
+        windowDays:
+          type: integer
+          format: int32
+        totalRequests:
+          type: integer
+          format: int64
+        byDay:
+          type: array
+          items:
+            $ref: "#/components/schemas/DayCount"
+    SearchResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaSummary"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        total:
+          type: integer
+          format: int64
+        took_ms:
+          type: integer
+          format: int64
+      description: Paged search result.
+    Suggestion:
+      type: object
+      properties:
+        text:
+          type: string
+        source:
+          type: string
+          description: "Where this suggestion came from: 'title' or 'tag'."
+      description: Autocomplete suggestion.
+    SuggestionsResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Suggestion"
+    UploadStatusResponse:
+      type: object
+      properties:
+        uploadId:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum:
+          - AWAITING_UPLOAD
+          - UPLOADED
+          - PROCESSING
+          - READY
+          - FAILED
+          - PUBLISHED
+        errorMessage:
+          type: string
+        width:
+          type: integer
+          format: int32
+        height:
+          type: integer
+          format: int32
+        durationMs:
+          type: integer
+          format: int32
+        renditionUrls:
+          type: object
+          additionalProperties:
+            type: string
+        mediaId:
+          type: string
+          format: uuid
+    CollectionItemResponse:
+      type: object
+      properties:
+        mediaId:
+          type: string
+          format: uuid
+        addedAt:
+          type: string
+          format: date-time
+    PagedResponseCollectionItemResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CollectionItemResponse"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        total:
+          type: integer
+          format: int64
+    PagedResponseMediaSummary:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaSummary"
+        page:
+          type: integer
+          format: int32
+        size:
+          type: integer
+          format: int32
+        total:
+          type: integer
+          format: int64
+    KeyResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        prefix:
+          type: string
+        status:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        lastUsedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+  securitySchemes:
+    bearer-jwt:
+      type: http
+      description: Paste the access token returned by /api/v1/auth/login or /register.
+      scheme: bearer
+      bearerFormat: JWT

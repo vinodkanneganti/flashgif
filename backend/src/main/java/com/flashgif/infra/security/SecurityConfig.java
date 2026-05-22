@@ -132,9 +132,13 @@ class SecurityConfig {
                         //     any 4xx/5xx from a permitAll endpoint gets masked as 401. ---
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
                         // --- Open: ops + docs ---
+                        // NB: "/v3/api-docs/**" matches subpaths only — `.yaml` and the
+                        // bare path need explicit entries.
                         .requestMatchers(
                                 "/actuator/health", "/actuator/info",
-                                "/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html"
+                                "/v3/api-docs", "/v3/api-docs/**",
+                                "/v3/api-docs.yaml", "/v3/api-docs.json",
+                                "/swagger-ui/**", "/swagger-ui.html"
                         ).permitAll()
                         // --- Open: auth endpoints themselves ---
                         .requestMatchers("/api/v1/auth/**").permitAll()

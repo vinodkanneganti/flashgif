@@ -65,7 +65,13 @@
       "Bash(rm /Users/bhavani/Developer/projects/giphyc/web/src/app/api/media/[id]/route.ts)",
       "Bash(rmdir /Users/bhavani/Developer/projects/giphyc/web/src/app/api/media/[id])",
       "Bash(cd /Users/bhavani/Developer/projects/giphyc/web && rm -rf 'src/app/api/media/[id]')",
-      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}  size=%{size_download}  content-type=%{content_type}\\\\n' http://localhost:9000/flashgif-media/renditions/30eb3304-800f-4d9e-a811-943a3858cb43/gif.gif)"
+      "Bash(curl -s -o /dev/null -w 'HTTP %{http_code}  size=%{size_download}  content-type=%{content_type}\\\\n' http://localhost:9000/flashgif-media/renditions/30eb3304-800f-4d9e-a811-943a3858cb43/gif.gif)",
+      "Bash(curl -sf -o /dev/null -w 'backend HTTP %{http_code}\\\\n' http://localhost:8080/actuator/health)",
+      "Bash(curl -sf -o /dev/null -w 'yaml HTTP %{http_code}  size=%{size_download}\\\\n' http://localhost:8080/v3/api-docs.yaml)",
+      "Bash(curl -sf -o /dev/null http://localhost:8080/v3/api-docs.yaml)",
+      "Bash(curl -s http://localhost:8080/v3/api-docs.yaml -o /Users/bhavani/Developer/projects/giphyc/docs/openapi.yaml)",
+      "Bash(curl -sf -o /dev/null -w 'health %{http_code}\\\\n' http://localhost:8080/actuator/health)",
+      "Bash(curl -s -i http://localhost:8080/v3/api-docs.yaml)"
     ]
   }
 }
