@@ -71,7 +71,8 @@
       "Bash(curl -sf -o /dev/null http://localhost:8080/v3/api-docs.yaml)",
       "Bash(curl -s http://localhost:8080/v3/api-docs.yaml -o /Users/bhavani/Developer/projects/giphyc/docs/openapi.yaml)",
       "Bash(curl -sf -o /dev/null -w 'health %{http_code}\\\\n' http://localhost:8080/actuator/health)",
-      "Bash(curl -s -i http://localhost:8080/v3/api-docs.yaml)"
+      "Bash(curl -s -i http://localhost:8080/v3/api-docs.yaml)",
+      "Bash(awk '{s+=$5; n++} END {print \"avg:\", int\\(s/n\\), \"bytes \\(~\"int\\(s/n/40\\)\" lines\\)\"}')"
     ]
   }
 }
