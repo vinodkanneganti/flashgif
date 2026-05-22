@@ -1,0 +1,15 @@
+# Local dev profile. Targets services defined in ops/docker-compose.yml.
+# Activated by default via SPRING_PROFILES_ACTIVE fallback in application.yml.
+
+logging:
+  level:
+    com.flashgif: DEBUG
+    # Hibernate SQL / parameter binding stays at INFO in normal dev — flip to
+    # DEBUG / TRACE when debugging a specific query. Was DEBUG/TRACE during
+    # Slice 3 auth wiring; left on too long and made every other log unreadable.
+    org.hibernate.SQL: INFO
+    org.hibernate.orm.jdbc.bind: INFO
+    # Same story — Slice 3 debug aids that have served their purpose.
+    org.springframework.security.web.FilterChainProxy: INFO
+    org.springframework.security.web.access: INFO
+    org.springframework.security.web.csrf: INFO

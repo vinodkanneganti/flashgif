@@ -1,0 +1,113 @@
+spring:
+  application:
+    name: flashgif-backend
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+  datasource:
+    url:      ${DB_URL:jdbc:postgresql://localhost:5432/flashgif}
+    username: ${DB_USER:flashgif}
+    password: ${DB_PASSWORD:flashgif}
+    hikari:
+      pool-name: flashgif-pool
+      maximum-pool-size: 10
+
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate          # Flyway owns schema
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+        format_sql: false
+
+  # Public API uses snake_case JSON to match the @Schema(name = ...) annotations
+  # we've been writing all along. Affects every controller request/response.
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  elasticsearch:
+    uris: ${ES_URIS:http://localhost:9200}
+
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+
+  rabbitmq:
+    host:     ${RABBIT_HOST:localhost}
+    port:     ${RABBIT_PORT:5672}
+    username: ${RABBIT_USER:flashgif}
+    password: ${RABBIT_PASSWORD:flashgif}
+    listener:
+      simple:
+        concurrency: 2
+        max-concurrency: 4
+        prefetch: 1
+        default-requeue-rejected: false   # let DLQ handle poison messages
+
+server:
+  port: 8080
+  error:
+    include-message: always
+    include-binding-errors: always
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: when-authorized
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
+# Application-specific config (read via @ConfigurationProperties later)
+flashgif:
+  storage:
+    endpoint:               ${S3_ENDPOINT:http://localhost:9000}
+    region:                 ${S3_REGION:us-east-1}
+    bucket:                 ${S3_BUCKET:flashgif-media}
+    access-key:             ${S3_ACCESS_KEY:flashgif}
+    secret-key:             ${S3_SECRET_KEY:flashgif-secret}
+    path-style:             true                       # required for MinIO
+    max-upload-bytes:       104857600                  # 100 MB
+    presign-expiry-seconds: 900                        # 15 min
+
+  search:
+    index-alias: media
+    index-version: v1
+
+  transcode:
+    ffmpeg-bin:       ffmpeg
+    ffprobe-bin:      ffprobe
+    timeout-seconds:  120
+
+  auth:
+    # HS256 secret; must be at least 32 bytes. OVERRIDE IN PRODUCTION.
+    secret:            ${FLASHGIF_JWT_SECRET:dev-secret-please-change-me-must-be-at-least-32-bytes-long}
+    issuer:            flashgif
+    access-token-ttl:  PT15M
+    refresh-token-ttl: P30D
+
+  developer:
+    requests-per-minute: 60
+    burst-capacity:      60
+
+logging:
+  level:
+    root: INFO
+    com.flashgif: DEBUG
+    org.springframework.web: INFO

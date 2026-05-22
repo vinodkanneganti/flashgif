@@ -1,0 +1,98 @@
+plugins {
+    id 'java'
+    id 'org.springframework.boot'              version '3.3.5'
+    id 'io.spring.dependency-management'       version '1.1.6'
+}
+
+group   = 'com.flashgif'
+version = '0.0.1-SNAPSHOT'
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+repositories {
+    mavenCentral()
+}
+
+ext {
+    set('springdocVersion', '2.6.0')
+    set('testcontainersVersion', '1.20.3')
+}
+
+dependencies {
+    // --- Web / API ---
+    implementation 'org.springframework.boot:spring-boot-starter-web'
+    implementation 'org.springframework.boot:spring-boot-starter-validation'
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // --- Persistence ---
+    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+    implementation 'org.flywaydb:flyway-core'
+    implementation 'org.flywaydb:flyway-database-postgresql'
+    runtimeOnly    'org.postgresql:postgresql'
+
+    // --- Search ---
+    implementation 'org.springframework.boot:spring-boot-starter-data-elasticsearch'
+
+    // --- Cache ---
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    // Bucket4j rate limiting added with the Developer API slice (Feature 4).
+
+    // --- Messaging ---
+    implementation 'org.springframework.boot:spring-boot-starter-amqp'
+
+    // --- Security ---
+    implementation 'org.springframework.boot:spring-boot-starter-security'
+    implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
+    runtimeOnly    'io.jsonwebtoken:jjwt-impl:0.12.6'
+    runtimeOnly    'io.jsonwebtoken:jjwt-jackson:0.12.6'
+
+    // --- Object storage (S3 / MinIO) ---
+    implementation platform('software.amazon.awssdk:bom:2.28.16')
+    implementation 'software.amazon.awssdk:s3'
+    implementation 'software.amazon.awssdk:s3-transfer-manager'
+
+    // --- API docs ---
+    implementation "org.springdoc:springdoc-openapi-starter-webmvc-ui:${springdocVersion}"
+
+    // --- Dev tooling ---
+    compileOnly      'org.projectlombok:lombok'
+    annotationProcessor 'org.projectlombok:lombok'
+    developmentOnly  'org.springframework.boot:spring-boot-devtools'
+
+    // --- Test ---
+    testImplementation 'org.springframework.boot:spring-boot-starter-test'
+    testImplementation 'org.springframework.security:spring-security-test'
+    testImplementation platform("org.testcontainers:testcontainers-bom:${testcontainersVersion}")
+    testImplementation 'org.testcontainers:junit-jupiter'
+    testImplementation 'org.testcontainers:postgresql'
+    testImplementation 'org.testcontainers:elasticsearch'
+    testImplementation 'org.testcontainers:rabbitmq'
+    testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+    testRuntimeOnly   'org.junit.platform:junit-platform-launcher'
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// ---------------------------------------------------------------------------
+// OpenAPI export: dumps docs/openapi.yaml from a running app instance.
+// Usage: ./gradlew bootRun &   then   ./gradlew exportOpenApi
+// (Wired as a manual task — a startup-time dump needs the springdoc-cli plugin
+// or a custom @SpringBootApplication runner; manual keeps things simple for now.)
+// ---------------------------------------------------------------------------
+tasks.register('exportOpenApi') {
+    group       = 'documentation'
+    description = 'Fetch the live OpenAPI spec and write docs/openapi.yaml'
+    doLast {
+        def url = 'http://localhost:8080/v3/api-docs.yaml'
+        def outFile = rootProject.file('../docs/openapi.yaml')
+        outFile.parentFile.mkdirs()
+        outFile.text = new URL(url).text
+        println "Wrote ${outFile}"
+    }
+}

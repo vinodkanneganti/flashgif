@@ -1,0 +1,4 @@
+# Single-package "workspace" file — exists only to hold the allowBuilds
+# allowlist that pnpm 11+ requires for native build scripts.
+allowBuilds:
+  unrs-resolver: true

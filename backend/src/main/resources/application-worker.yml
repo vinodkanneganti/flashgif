@@ -1,0 +1,11 @@
+# Worker profile. Activate when running a dedicated transcode worker process
+# (no HTTP traffic). Intended for production split: `--spring.profiles.active=worker`.
+
+server:
+  port: -1                        # disable embedded Tomcat
+
+spring:
+  main:
+    web-application-type: none
+
+# Worker-specific concurrency tuning will land here as the media pipeline matures.

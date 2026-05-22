@@ -1,0 +1,70 @@
+((((((((((((((((((( GIPHY CLONE )))))))))))))))))))
+
+
+1. Feature: Advanced GIF Search & Discovery
+Platforms: Web (Next.js), iOS, Android, Backend (Spring Boot)
+User Story: As a casual user, I want to search for GIFs using keywords or trending tags so that I can find the perfect visual reaction for my conversations.
+Screens: 
+* HomeScreen: Masonry grid of trending GIFs and category chips.
+SearchSuggestions: Auto-complete dropdown with trending search terms.
+SearchResults: Infinite-scroll grid filtered by relevance or recency.
+
+API: 
+* GET /api/v1/search?q={query}&page={n}&size={n}
+GET /api/v1/trending?type={gif|sticker}
+GET /api/v1/search/suggestions?q={query}
+
+2. Feature: Media Upload & Transformation
+Platforms: Web (Next.js), Backend (Spring Boot + FFmpeg)
+User Story: As a creator, I want to upload video files or GIF files so they can be optimized and hosted for global sharing.
+Screens: 
+* UploadModal: Drag-and-drop zone with file validation (size/type).
+ProcessingScreen: Progress bar showing transcoding status (utilizing Spring Boot @Async or RabbitMQ for background tasks).
+TaggingScreen: Interface to add titles, descriptive tags, and content ratings.
+
+API: 
+* POST /api/v1/media/upload (Returns uploadId or S3 Presigned URL)
+POST /api/v1/media/metadata (Saves entity via Spring Data JPA)
+GET /api/v1/media/status/{uploadId}
+
+3. Feature: User Collections & Favorites
+Platforms: Web (Next.js), iOS, Android, Backend (Spring Boot + Spring Security)
+User Story: As a logged-in user, I want to "favorite" GIFs so that I can quickly access my most-used reactions later.
+
+Screens: 
+* FavoritesTab: A personalized grid of saved content.
+CollectionManager: A view to create and manage custom folders.
+
+API: 
+* POST /api/v1/favorites (Request body: { "mediaId": "uuid" })
+DELETE /api/v1/favorites/{mediaId}
+GET /api/v1/users/me/favorites (Paged response)
+
+4. Feature: Developer API & Integration Toolkit
+Platforms: Backend (Spring Boot), Documentation (SpringDoc/Swagger)
+
+User Story: As a third-party developer, I want to access the FlashGif library via an API key so that I can integrate GIF search into my own messaging app.
+
+Screens: 
+* DevDashboard: Manage API keys and view usage analytics.
+Documentation: Interactive Swagger UI for live endpoint testing.
+
+API:
+ * POST /api/v1/auth/developer/keys (Generates JWT or API Key)
+ * GET /api/v1/usage/analytics
+ * 
+
+5. Feature: Creator Profile & Channel
+Platforms: Web (Next.js), iOS, Android, Backend (Spring Boot)
+
+User Story: As a digital artist, I want a public-facing channel so that I can build a brand and showcase my portfolio of original animations.
+
+Screens: 
+* PublicChannelView: Profile header (banner, avatar, verified badge) and organized upload history.
+SettingsScreen: Edit display name, social links, and website URL.
+
+API: 
+* GET /api/v1/channels/{username}
+PATCH /api/v1/channels/profile (Updates CreatorEntity in DB)
+
+Updated Technical Stack (Java Focused)ComponentTechnologyBackend FrameworkJava 17/21 + Spring Boot 3.xAuthenticationSpring Security + OAuth2/JWTDatabasePostgreSQL (Relational) + Spring Data JPASearch EngineElasticsearch (Integrated via Spring Data Elasticsearch)Task QueueRabbitMQ or Redis Pub/Sub (For async media processing)API DocsSpringDoc OpenAPI (Swagger)

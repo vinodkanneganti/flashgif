@@ -1,0 +1,30 @@
+{
+  "properties": {
+    "id":               { "type": "keyword" },
+    "title": {
+      "type": "text",
+      "analyzer": "standard",
+      "fields": {
+        "suggest": { "type": "search_as_you_type" }
+      }
+    },
+    "description":      { "type": "text" },
+    "tags": {
+      "type": "keyword",
+      "fields": {
+        "text": { "type": "text" }
+      }
+    },
+    "type":             { "type": "keyword" },
+    "content_rating":   { "type": "keyword" },
+    "status":           { "type": "keyword" },
+    "popularity":       { "type": "float" },
+    "view_count":       { "type": "long" },
+    "favorite_count":   { "type": "long" },
+    "created_at":       { "type": "date" },
+    "uploader_username":{ "type": "keyword" },
+    "width":            { "type": "integer" },
+    "height":           { "type": "integer" },
+    "rendition_urls":   { "type": "object", "enabled": false }
+  }
+}

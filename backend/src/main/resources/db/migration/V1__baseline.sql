@@ -1,0 +1,3 @@
+-- V1: Flyway baseline.
+-- Intentionally empty. Feature-owned tables land in subsequent migrations:
+--   V2__media.sql, V3__users.sql, V4__favorites.sql, V5__channels.sql, V6__developer.sql
